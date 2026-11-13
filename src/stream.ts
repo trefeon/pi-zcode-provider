@@ -25,7 +25,7 @@ import { ZCODE_START_URL, buildHeaders, buildRequestBody } from "./dress.ts";
 import { createAssistantEventStream, type AssistantEventStream } from "./host/stream.ts";
 import { asRecord } from "./json.ts";
 import { isJwtExpired, type ZCodeCredentials } from "./keyring.ts";
-const MAX_CONCURRENCY_RETRIES = 2;
+const MAX_CONCURRENCY_RETRIES = 4;
 
 export class ZCodeHttpError extends Error {
   readonly status: number;
@@ -279,10 +279,8 @@ export function streamZCodeTurn(
       });
 
       const fetchFn = deps.fetchImpl ?? fetch;
-      let res: Response | null = null;
-      for (let attempt = 0; attempt <= MAX_CONCURRENCY_RETRIES; attempt++) {
-        if (options.signal?.aborted) break;
-        res = await fetchFn(ZCODE_START_URL, {
+      const fetchOnce = (): Promise<Response> =>
+        fetchFn(ZCODE_START_URL, {
           method: "POST",
           headers: buildHeaders(creds.jwt, {
             appVersion,
@@ -292,29 +290,40 @@ export function streamZCodeTurn(
           body,
           signal: options.signal,
         });
+      const isConcurrencyCode = (code: number): boolean => code === 3008 || code === 3009;
+      const concurrencyBackoff = (): Promise<void> =>
+        delay(1200 * (attempt + 1) + Math.floor(Math.random() * 800), undefined, { signal: options.signal });
 
-        if (res.ok && res.body) break;
-        const errText = await res.text().catch(() => "");
-        const classified = classifyErrorPayload(res.status, errText);
-        if ((classified.code === 3009 || classified.code === 3008) && attempt < MAX_CONCURRENCY_RETRIES) {
-          const jitterMs = 1200 * (attempt + 1) + Math.floor(Math.random() * 500);
-          await delay(jitterMs, undefined, { signal: options.signal });
-          continue;
-        }
-        throw classified;
-      }
-
-      if (!res || !res.ok || !res.body) {
-        throw new ZCodeHttpError("No response body from ZCode", res?.status ?? 0);
-      }
-
-      const contentType = res.headers.get("content-type") ?? "";
-      if (contentType.includes("application/json")) {
-        throw classifyErrorPayload(res.status, await res.text());
-      }
-
+      // Concurrency limit (3008/3009): Start Plan allows ONE concurrent turn per account,
+      // so the slot may be held by another live turn (OMP + Pi at once, desktop chat).
+      // ZCode surfaces the limit three ways and all must retry:
+      //   1. non-2xx HTTP status
+      //   2. HTTP 200 with a JSON error envelope body
+      //   3. mid-stream SSE `event: error` (or a first-frame JSON envelope)
+      // Retrying is only safe while nothing has been emitted to the host stream
+      // (`committed` false) — replaying mid-turn would duplicate blocks/events.
+      let res: Response | null = null;
+      let attempt = 0;
+      let streamConsumed = false;
       let upstreamStop: StopReason = "stop";
-      for await (const ev of parseSseEvents(res.body)) {
+      while (!streamConsumed) {
+        if (options.signal?.aborted) break;
+        res = await fetchOnce();
+
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!res.ok || !res.body || contentType.includes("application/json")) {
+          const errText = await res.text().catch(() => "");
+          const classified = classifyErrorPayload(res.status, errText);
+          if (isConcurrencyCode(classified.code) && !committed && attempt < MAX_CONCURRENCY_RETRIES) {
+            attempt++;
+            await concurrencyBackoff();
+            continue;
+          }
+          throw classified;
+        }
+
+        try {
+          for await (const ev of parseSseEvents(res.body)) {
         const type = ev["type"];
 
         if (type === "message_start") {
@@ -410,10 +419,26 @@ export function streamZCodeTurn(
 
         if (type === "error") {
           const errObj = asRecord(ev["error"]);
+          const code = typeof errObj?.["code"] === "number" ? errObj["code"] : 0;
           const msg = typeof errObj?.["message"] === "string" ? errObj["message"] : JSON.stringify(ev);
-          throw new ZCodeHttpError(msg, 500);
+          throw new ZCodeHttpError(msg, 500, code);
         }
-      }
+          } // for await (parseSseEvents)
+          streamConsumed = true;
+        } catch (err) {
+          if (
+            err instanceof ZCodeHttpError &&
+            isConcurrencyCode(err.code) &&
+            !committed &&
+            attempt < MAX_CONCURRENCY_RETRIES
+          ) {
+            attempt++;
+            await concurrencyBackoff();
+            continue;
+          }
+          throw err;
+        }
+      } // while (retry window)
 
       closeAllBlocks();
       if (upstreamStop === "stop" && output.content.some((b) => b.type === "toolCall")) {

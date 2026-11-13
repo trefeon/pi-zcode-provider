@@ -473,6 +473,123 @@ describe("stream.ts SSE & error handling", () => {
     expect(result.stopReason).toBe("stop");
   });
 
+  test("retries HTTP 200 JSON 3008 envelope then succeeds (single-account slot held by another turn)", async () => {
+    // ZCode answers concurrency limits with HTTP 200 + JSON envelope — this shape
+    // previously bypassed the retry loop entirely and surfaced as an error turn.
+    let fetches = 0;
+    const sse = [
+      `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 10 } } })}`,
+      `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`,
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } })}`,
+      `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`,
+      `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } })}`,
+      `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`,
+    ].join("\n\n") + "\n\n";
+    const fakeFetch = async () => {
+      fetches++;
+      if (fetches === 1) {
+        return new Response(JSON.stringify({ code: 3008, msg: "concurrency limit" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+
+    const stream = streamZCodeTurn(
+      model,
+      { messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 }] },
+      {},
+      {
+        credentials: () => ({ jwt: validJwt, deviceMid: "dev-1" }),
+        appVersion: () => "3.18.2",
+        sessionId: "sess-1",
+        fetchImpl: fakeFetch,
+      },
+    );
+    const events: string[] = [];
+    for await (const ev of stream) events.push(ev.type);
+    const result = await stream.result();
+
+    expect(fetches).toBe(2);
+    expect(result.stopReason).toBe("stop");
+    expect(result.content).toEqual([{ type: "text", text: "ok" }]);
+    expect(events).toContain("done");
+  });
+
+  test("retries mid-stream SSE error 3008 before any content is emitted, then succeeds", async () => {
+    let fetches = 0;
+    const sse = [
+      `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`,
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "recovered" } })}`,
+      `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } })}`,
+      `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`,
+    ].join("\n\n") + "\n\n";
+    const fakeFetch = async () => {
+      fetches++;
+      if (fetches === 1) {
+        return new Response(
+          `event: error\ndata: ${JSON.stringify({ type: "error", error: { code: 3008, message: "concurrency" } })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+
+    const stream = streamZCodeTurn(
+      model,
+      { messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 }] },
+      {},
+      {
+        credentials: () => ({ jwt: validJwt, deviceMid: "dev-1" }),
+        appVersion: () => "3.18.2",
+        sessionId: "sess-1",
+        fetchImpl: fakeFetch,
+      },
+    );
+    const events: string[] = [];
+    for await (const ev of stream) events.push(ev.type);
+    const result = await stream.result();
+
+    expect(fetches).toBe(2);
+    expect(result.stopReason).toBe("stop");
+    expect(result.content).toEqual([{ type: "text", text: "recovered" }]);
+  });
+
+  test("does NOT retry 3008 after content already streamed (would duplicate events)", async () => {
+    let fetches = 0;
+    const fakeFetch = async () => {
+      fetches++;
+      return new Response(
+        [
+          `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`,
+          `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } })}`,
+          `event: error\ndata: ${JSON.stringify({ type: "error", error: { code: 3008, message: "concurrency" } })}\n\n`,
+        ].join("\n\n"),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    };
+
+    const stream = streamZCodeTurn(
+      model,
+      { messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 }] },
+      {},
+      {
+        credentials: () => ({ jwt: validJwt, deviceMid: "dev-1" }),
+        appVersion: () => "3.18.2",
+        sessionId: "sess-1",
+        fetchImpl: fakeFetch,
+      },
+    );
+    const events: string[] = [];
+    for await (const ev of stream) events.push(ev.type);
+    const result = await stream.result();
+
+    expect(fetches).toBe(1);
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("concurrency");
+  });
+
   test("maps HTTP 200 JSON code 1005 envelope into error turn without throwing unhandled", async () => {
     const fakeFetch = async () =>
       new Response(JSON.stringify({ code: 1005, msg: "exceed quota limit" }), {
