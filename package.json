@@ -1,0 +1,57 @@
+{
+  "name": "pi-zcode-provider",
+  "version": "1.0.0",
+  "description": "ZCode & Z.ai Start Plan provider extension for Oh My Pi (OMP) and Pi Coding Agent with live version/catalog sync and automatic promotional token claiming",
+  "type": "module",
+  "main": "extensions/index.ts",
+  "files": [
+    "extensions",
+    "src",
+    "bin",
+    "PROTOCOL.md",
+    "README.md"
+  ],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "omp-plugin",
+    "zcode",
+    "zai",
+    "provider"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "bin": {
+    "pi-zcode-provider": "./bin/cli.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trefeon/pi-zcode-provider.git"
+  },
+  "homepage": "https://github.com/trefeon/pi-zcode-provider#readme",
+  "bugs": "https://github.com/trefeon/pi-zcode-provider/issues",
+  "scripts": {
+    "balance": "bun run bin/cli.ts balance",
+    "claim": "bun run bin/cli.ts claim",
+    "models": "bun run bin/cli.ts models",
+    "test-stream": "bun run bin/cli.ts test",
+    "test": "bun test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-ai": "^18.20.0",
+    "@oh-my-pi/pi-coding-agent": "^18.20.0",
+    "@types/bun": "latest",
+    "typescript": "latest"
+  },
+  "author": "trefeon",
+  "license": "MIT"
+}
