@@ -43,7 +43,7 @@ Unrecognized requests return HTTP 405 `{"code":3012,"msg":"request has been bloc
 5. **Z.ai tool replay quirks:**
    - Merge consecutive `toolResult` turns into a single `user` message containing all `tool_result` blocks.
    - Include `id: toolCallId` alongside `tool_use_id: toolCallId` on each `tool_result` block.
-   - Partition `assistant` content so all non-`tool_use` blocks precede `tool_use` blocks; omit unsigned `thinking` blocks.
+   - Partition `assistant` content so all non-`tool_use` blocks precede `tool_use` blocks; replay unsigned `thinking` blocks with `signature: ""` (non-signing endpoint accepts them as opaque continuation hints; omitting them strips reasoning chains in multi-turn history).
 6. **ZCode Desktop attribution headers:**
    - `Authorization: Bearer <jwt>`, `anthropic-version: 2023-06-01`, `HTTP-Referer: https://zcode.z.ai`
    - `User-Agent: ZCode/<appVersion> ai-sdk/anthropic/3.0.81`

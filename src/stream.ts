@@ -8,7 +8,7 @@
  *   - Usage (input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens)
  *   - Stop reasons (end_turn → stop, max_tokens → length, tool_use → toolUse, refusal/sensitive → error)
  *   - HTTP 200 JSON error bodies (1005 quota exhausted, 1113 no resource package) & HTTP 4xx/5xx errors
- *   - Built-in retry on code 3009/3008 concurrency limits (up to 2 jittered retries before failing)
+ *   - Built-in retry on code 3009/3008 concurrency limits (up to 4 jittered retries before failing)
  */
 
 import type {
@@ -292,7 +292,7 @@ export function streamZCodeTurn(
         });
       const isConcurrencyCode = (code: number): boolean => code === 3008 || code === 3009;
       const concurrencyBackoff = (): Promise<void> =>
-        delay(1200 * (attempt + 1) + Math.floor(Math.random() * 800), undefined, { signal: options.signal });
+        delay(1200 * attempt + Math.floor(Math.random() * 800), undefined, { signal: options.signal });
 
       // Concurrency limit (3008/3009): Start Plan allows ONE concurrent turn per account,
       // so the slot may be held by another live turn (OMP + Pi at once, desktop chat).

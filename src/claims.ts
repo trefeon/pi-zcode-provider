@@ -266,7 +266,12 @@ function findBrowserExecutable(): string | null {
     if (candidate.includes("/") || candidate.includes("\\")) {
       if (existsSync(candidate)) return candidate;
     } else {
-      return candidate;
+      // Bare executable name (Linux): resolve against PATH instead of assuming the
+      // first candidate exists — spawn would otherwise fail with a confusing ENOENT.
+      for (const dir of process.env.PATH?.split(":") ?? []) {
+        const full = join(dir, candidate);
+        if (existsSync(full)) return full;
+      }
     }
   }
   return null;
@@ -364,16 +369,19 @@ async function solveAliyunCaptchaCdp(scene: CaptchaConfig): Promise<{ param: str
     ws.addEventListener("close", () => drainPending("CDP WebSocket closed unexpectedly"));
     ws.addEventListener("error", () => drainPending("CDP WebSocket error"));
 
-    const cdpCall = (method: string, params: Record<string, unknown> = {}): Promise<CdpMessage> => {
+    const cdpCall = (method: string, params: Record<string, unknown> = {}, timeoutMs = CAPTCHA_TIMEOUT_MS): Promise<CdpMessage> => {
       const id = msgId++;
       const waiter = Promise.withResolvers<CdpMessage>();
       pending.set(id, waiter);
       ws.send(JSON.stringify({ id, method, params }));
-      return waiter.promise;
+      const timer = setTimeout(() => {
+        if (pending.delete(id)) waiter.reject(new Error(`CDP call timeout: ${method}`));
+      }, timeoutMs);
+      return waiter.promise.finally(() => clearTimeout(timer));
     };
 
     try {
-      await cdpCall("Runtime.enable");
+      await cdpCall("Runtime.enable", {}, 5_000);
       // Wait for document ready on zcode.z.ai/cn
       await delay(1_500);
 

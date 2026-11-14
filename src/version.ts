@@ -14,6 +14,7 @@
 import { mkdirSync, openSync, readFileSync, readSync, closeSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { asRecord } from "./json.ts";
 
 export const FALLBACK_ZCODE_VERSION = "3.18.2";
 export const ZCODE_ORIGIN = "https://zcode.z.ai";
@@ -102,6 +103,10 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+/** Pick the highest semver candidate. FLOOR IS FALLBACK_ZCODE_VERSION: if Z.ai ever
+ * ships a release below the reviewed baseline, the spoofed version stays at the
+ * fallback rather than regressing (the risk gate rejects versions older than the
+ * baseline ZCode Desktop build with 405/3012). */
 function maxSemver(candidates: string[]): string {
   let best = FALLBACK_ZCODE_VERSION;
   for (const c of candidates) {
@@ -168,6 +173,29 @@ export function clientPlatformString(): string {
   return `${process.platform}-${process.arch}`;
 }
 
+/** Re-validate cached model specs instead of trusting the on-disk JSON blindly;
+ * a corrupted cache must never inject garbage specs into the model catalog. */
+function cachedModelSpecs(raw: unknown): ZCodeModelSpec[] {
+  if (!Array.isArray(raw)) return DEFAULT_MODELS;
+  const specs: ZCodeModelSpec[] = [];
+  for (const item of raw) {
+    const rec = asRecord(item);
+    if (!rec || typeof rec["id"] !== "string" || !rec["id"].trim()) continue;
+    specs.push({
+      id: rec["id"].trim(),
+      name: typeof rec["name"] === "string" && rec["name"].trim() ? rec["name"] : `${rec["id"]} (ZCode)`,
+      contextWindow: typeof rec["contextWindow"] === "number" && rec["contextWindow"] > 0 ? rec["contextWindow"] : 200_000,
+      maxTokens: typeof rec["maxTokens"] === "number" && rec["maxTokens"] > 0 ? rec["maxTokens"] : 64_000,
+      reasoning: rec["reasoning"] === true,
+      efforts: Array.isArray(rec["efforts"])
+        ? rec["efforts"].filter((e): e is "low" | "high" | "max" => e === "low" || e === "high" || e === "max")
+        : [],
+      supportsImage: rec["supportsImage"] === true,
+    });
+  }
+  return specs.length > 0 ? specs : DEFAULT_MODELS;
+}
+
 function readCachedConfig(cachePath = defaultCachePath()): ZCodeRuntimeConfig | null {
   try {
     const raw: unknown = JSON.parse(readFileSync(cachePath, "utf8"));
@@ -177,7 +205,7 @@ function readCachedConfig(cachePath = defaultCachePath()): ZCodeRuntimeConfig | 
       appVersion: rec["appVersion"] as string,
       checkedAt: typeof rec["checkedAt"] === "number" ? rec["checkedAt"] : 0,
       captcha: (rec["captcha"] as CaptchaConfig | null) ?? null,
-      models: Array.isArray(rec["models"]) && rec["models"].length > 0 ? (rec["models"] as ZCodeModelSpec[]) : DEFAULT_MODELS,
+      models: cachedModelSpecs(rec["models"]),
       startPlanModelIds: Array.isArray(rec["startPlanModelIds"]) ? (rec["startPlanModelIds"] as string[]) : DEFAULT_START_MODEL_IDS,
     };
   } catch {

@@ -7,7 +7,9 @@ import { describe, expect, test } from "bun:test";
 import type { Context, Effort, Model } from "@oh-my-pi/pi-ai";
 import { activeBalanceModels } from "../src/claims.ts";
 import { buildHeaders, buildRequestBody } from "../src/dress.ts";
+import { jwtExpiryMs } from "../src/keyring.ts";
 import { streamZCodeTurn } from "../src/stream.ts";
+import { resolveModelSpec } from "../src/version.ts";
 
 describe("dress.ts spoofing", () => {
   test("produces exact 3 cached system blocks, context prefix, user_id metadata, and tail-only cache_control", () => {
@@ -616,5 +618,57 @@ describe("stream.ts SSE & error handling", () => {
     expect(events).toEqual(["error"]);
     expect(result.stopReason).toBe("error");
     expect(result.errorMessage).toContain("1005");
+  });
+});
+
+describe("version.ts resolveModelSpec", () => {
+  const catalog = [
+    {
+      id: "GLM-5.3-Flash",
+      name: "GLM-5.3-Flash (ZCode)",
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      efforts: ["low", "high", "max"] as Array<"low" | "high" | "max">,
+      supportsImage: true,
+    },
+  ];
+
+  test("resolves known ids case-insensitively", () => {
+    const spec = resolveModelSpec("glm-5.3-flash", catalog);
+    expect(spec.id).toBe("GLM-5.3-Flash");
+    expect(spec.contextWindow).toBe(1_000_000);
+    expect(spec.supportsImage).toBe(true);
+  });
+
+  test("synthesizes defaults for unknown non-5.x ids (200k, no reasoning)", () => {
+    const spec = resolveModelSpec("GLM-9", catalog);
+    expect(spec.contextWindow).toBe(200_000);
+    expect(spec.maxTokens).toBe(64_000);
+    expect(spec.reasoning).toBe(false);
+    expect(spec.efforts).toEqual([]);
+  });
+
+  test("synthesizes 5.x defaults for unknown 5.3/5.2-family ids (1M, reasoning, efforts)", () => {
+    const spec = resolveModelSpec("GLM-5.3-Air", []);
+    expect(spec.contextWindow).toBe(1_000_000);
+    expect(spec.maxTokens).toBe(128_000);
+    expect(spec.reasoning).toBe(true);
+    expect(spec.efforts).toEqual(["low", "high", "max"]);
+    expect(spec.supportsImage).toBe(false);
+  });
+});
+
+describe("keyring.ts jwtExpiryMs", () => {
+  test("decodes the exp claim in ms", () => {
+    const expSec = Math.floor(Date.now() / 1000) + 600;
+    const jwt = `h.${Buffer.from(JSON.stringify({ exp: expSec })).toString("base64url")}.s`;
+    expect(jwtExpiryMs(jwt)).toBe(expSec * 1000);
+  });
+
+  test("returns 0 for malformed or exp-less tokens", () => {
+    expect(jwtExpiryMs("not-a-jwt")).toBe(0);
+    expect(jwtExpiryMs(`h.${Buffer.from("not json").toString("base64url")}.s`)).toBe(0);
+    expect(jwtExpiryMs(`h.${Buffer.from(JSON.stringify({ sub: "x" })).toString("base64url")}.s`)).toBe(0);
   });
 });

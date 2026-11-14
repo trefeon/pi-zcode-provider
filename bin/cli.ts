@@ -20,6 +20,14 @@ import { resolveModelSpec, syncRuntimeConfig } from "../src/version.ts";
 
 const cmd = process.argv[2] ?? "balance";
 
+// Self-update needs no ZCode credentials — dispatch before the credential gate so
+// a credential-less machine can still update the plugin.
+if (cmd === "update") {
+  const up = await maybeAutoUpdate({ force: true });
+  console.log(`pi-zcode-provider (${up.kind}) v${up.current}: ${up.status}${up.latest ? ` (latest ${up.latest})` : ""}${up.detail ? ` — ${up.detail}` : ""}`);
+  process.exit(up.status === "failed" ? 1 : 0);
+}
+
 let creds: ReturnType<typeof loadCredentials>;
 try {
   creds = loadCredentials();
@@ -69,10 +77,6 @@ if (cmd === "balance") {
   const expired = isJwtExpired(creds.jwt);
   console.log(`ZCode appVersion=${runtime.appVersion} | JWT=${expired ? "EXPIRED" : "valid"} | deviceMid=${creds.deviceMid || "(none)"}`);
   if (expired) process.exit(1);
-} else if (cmd === "update") {
-  const up = await maybeAutoUpdate({ force: true });
-  console.log(`pi-zcode-provider (${up.kind}) v${up.current}: ${up.status}${up.latest ? ` (latest ${up.latest})` : ""}${up.detail ? ` — ${up.detail}` : ""}`);
-  if (up.status === "failed") process.exit(1);
 } else if (cmd === "test") {
   const targetId = process.argv[3] ?? "GLM-5.3-Flash";
   const spec = resolveModelSpec(targetId, runtime.models);

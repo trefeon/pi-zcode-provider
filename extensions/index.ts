@@ -133,11 +133,11 @@ export default function register(pi: ExtensionAPI): void {
         const creds = getCreds();
         if (isJwtExpired(creds.jwt)) return;
         runtime = await syncRuntimeConfig({ jwt: creds.jwt, deviceMid: creds.deviceMid });
-        lastClaimAt = Date.now();
         const results = await autoClaimAvailable(creds, {
           appVersion: runtime.appVersion,
           captcha: runtime.captcha,
         });
+        lastClaimAt = Date.now();
         for (const r of results) {
           if (r.success) {
             notify(ctx, `[pi-zcode] Claimed ${r.name}: ${r.message}`, "info");
@@ -166,6 +166,9 @@ export default function register(pi: ExtensionAPI): void {
         credentials: getCreds,
         appVersion: () => runtime.appVersion,
         sessionId,
+        // Cast is required (host AssistantMessageEventStream is a class with private
+        // fields, so structural assignability fails). Drift is guarded by the
+        // compile-time conformance check in src/host/stream.ts.
       }) as unknown as AssistantMessageEventStream,
   });
 

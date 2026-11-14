@@ -5,7 +5,19 @@
  * with no runtime resolution of the host's internal classes.
  */
 
-import type { AssistantMessage, AssistantMessageEvent } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@oh-my-pi/pi-ai";
+
+/**
+ * Drift tripwire: extensions/index.ts must cast this structural stream to the host's
+ * AssistantMessageEventStream class (private fields defeat structural assignability).
+ * If the host class ever stops satisfying this interface, the cast becomes unsound —
+ * this compile-time check fails first, before any runtime surprise.
+ */
+type HostStreamConformance = AssistantMessageEventStream extends AssistantEventStream
+  ? true
+  : "AssistantMessageEventStream no longer satisfies AssistantEventStream — fix the cast in extensions/index.ts";
+// Value exists to force the compile-time conformance check to evaluate.
+const _HOST_STREAM_CONFORMANCE: HostStreamConformance = true;
 
 export interface AssistantEventStream extends AsyncIterable<AssistantMessageEvent> {
   push(event: AssistantMessageEvent): void;
