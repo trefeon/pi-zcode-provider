@@ -13,8 +13,9 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PACKAGE_NAME = "pi-zcode-provider";
-const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
+export const PACKAGE_NAME = "@trefeon/pi-zcode-provider";
+// Registry packument URLs need the scope percent-encoded (@scope/name → %40scope%2Fname).
+const REGISTRY_URL = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE_NAME)}/latest`;
 const CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 4_000;
 const CMD_TIMEOUT_MS = 120_000;

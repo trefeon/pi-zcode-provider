@@ -1,5 +1,5 @@
 {
-  "name": "pi-zcode-provider",
+  "name": "@trefeon/pi-zcode-provider",
   "version": "1.0.2",
   "description": "ZCode & Z.ai Start Plan provider extension for Oh My Pi (OMP) and Pi Coding Agent with live version/catalog sync and automatic promotional token claiming",
   "type": "module",
